@@ -11,19 +11,19 @@ import (
         "image/png"
 )
 
-        private PointF WorldtoMap(IPoint p)
-        {
-            PointF result = new Point();
-            double left = _envelope.MinX;
-            double top = _envelope.MaxY;
-            result.X = (float)((p.X - left) / _pixelWidth);
-            result.Y = (float)((top - p.Y) / _pixelHeight);
-            return result;
-        }
+const (
+    w = 256
+    h = 256
+)
 
 func GeoPToImgP (geoP image.Point, bounds image.Rectangle) image.Point {
     r := bounds.Canon()
-    left := r.X.
+    left := r.Min.X
+    top := r.Max.Y
+    x := (geoP.X - left) / w;
+    y := (top - geoP.Y) / h;
+
+    return image.Pt(x, y)
 }
 
 func saveToPngFile(filePath string, m image.Image) {

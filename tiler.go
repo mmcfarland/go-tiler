@@ -2,14 +2,14 @@ package main
 
 import (
 	"bufio"
+	"code.google.com/p/draw2d/draw2d"
 	"fmt"
+	"github.com/paulsmith/gogeos/geos"
+	"image"
+	"image/png"
 	"log"
 	"math"
 	"os"
-
-	"code.google.com/p/draw2d/draw2d"
-	"image"
-	"image/png"
 )
 
 type Point struct {
@@ -42,7 +42,7 @@ func TileToBbox(xc, yc, zoom int) (bbox Envelope) {
 	return
 }
 
-func GeoPToImgP(geoP Point, b Envelope) Point {
+func GeoPToImgP(geoP geos.Coord, b Envelope) Point {
 	left := b.Min.X
 	top := b.Max.Y
 	x := (geoP.X - left) / w
@@ -75,14 +75,22 @@ func saveToPngFile(filePath string, m image.Image) {
 func main() {
 	i := image.NewRGBA(image.Rect(0, 0, w, h))
 	gc := draw2d.NewGraphicContext(i)
+	gc.SetLineWidth(3)
 	b := Envelope{Point{2650000, 200000}, Point{2750000, 300000}}
-	p := Point{2691389, 253794}
+	poly, err := geos.FromWKT("LINESTRING (2691389 253794, 2699389 253994, 2709389 269994)")
+	if err != nil {
+		fmt.Println(err)
+	}
 
-	sp1 := GeoPToImgP(p, b)
-	sp2 := GeoPToImgP(Point{2699389, 253994}, b)
-
-	gc.MoveTo(sp1.X, sp1.Y)
-	gc.LineTo(sp2.X, sp2.Y)
+	coords, _ := poly.Coords()
+	for i, c := range coords {
+		pt := GeoPToImgP(c, b)
+		if i == 0 {
+			gc.MoveTo(pt.X, pt.Y)
+		} else {
+			gc.LineTo(pt.X, pt.Y)
+		}
+	}
 	gc.Stroke()
 
 	saveToPngFile("TestPath.png", i)

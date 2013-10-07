@@ -3,7 +3,10 @@ package main
 import (
 	"bufio"
 	"code.google.com/p/draw2d/draw2d"
+	"code.google.com/p/gcfg"
+	"database/sql"
 	"fmt"
+	_ "github.com/bmizerany/pq"
 	"github.com/paulsmith/gogeos/geos"
 	"image"
 	"image/png"
@@ -20,6 +23,13 @@ type Envelope struct {
 	Min, Max Point
 }
 
+type Config struct {
+	Database struct {
+		Name string
+		User string
+	}
+}
+
 const (
 	w       = 256.0
 	h       = 256.0
@@ -28,17 +38,38 @@ const (
 
 var (
 	Origin = Point{-20037508.34789244, 20037508.34789244}
+	DbConn *sql.DB
 )
+
+func setupDb(dbName, user string) (db *sql.DB) {
+	conn := fmt.Sprintf("user=%s dbname=%s", dbName, user)
+	fmt.Println(conn)
+	db, err := sql.Open("postgres", conn)
+	if err != nil {
+		log.Fatalf("Bad db conn: %v", err)
+	}
+	return
+}
 
 func TileToBbox(xc, yc, zoom int) (bbox Envelope) {
 	x := float64(xc)
 	y := float64(yc)
 	z := float64(zoom)
-	size := mapSize / math.Pow(2, float64(z))
+	size := mapSize / math.Pow(2, z)
 	fmt.Println(x, y, z, size)
 	fmt.Println(x * size)
 	bbox.Min = Point{Origin.X + x*size, Origin.Y - (y+1)*size}
 	bbox.Max = Point{Origin.X + (x+1)*size, Origin.Y - y*size}
+	return
+}
+
+func GetTileFeatures(bbox Envelope) (wkb []byte) {
+	b := fmt.Sprintf("ST_MakeEnvelope(%f,%f,%f,%f, 3857)",
+		bbox.Min.X, bbox.Min.Y, bbox.Max.X, bbox.Max.Y)
+	tmpl := `SELECT ST_AsBinary(ST_Intersection(geom, %s)) 
+            FROM routes where ST_Intersects(geom, %s);`
+	sql := fmt.Sprintf(tmpl, b, b)
+	fmt.Println(sql)
 	return
 }
 
@@ -73,10 +104,22 @@ func saveToPngFile(filePath string, m image.Image) {
 }
 
 func main() {
+
+	var conf Config
+	err := gcfg.ReadFileInto(&conf, "settings.conf")
+	if err != nil {
+		fmt.Println("Invalid setting.conf file", err)
+		return
+	}
+	DbConn = setupDb(conf.Database.User, conf.Database.Name)
+
+	defer DbConn.Close()
+
 	i := image.NewRGBA(image.Rect(0, 0, w, h))
 	gc := draw2d.NewGraphicContext(i)
 	gc.SetLineWidth(3)
 	b := Envelope{Point{2650000, 200000}, Point{2750000, 300000}}
+	//_ = GetTileFeatures(b)
 	poly, err := geos.FromWKT("LINESTRING (2691389 253794, 2699389 253994, 2709389 269994)")
 	if err != nil {
 		fmt.Println(err)

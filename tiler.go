@@ -5,14 +5,18 @@ import (
 	"code.google.com/p/draw2d/draw2d"
 	"code.google.com/p/gcfg"
 	"database/sql"
+	"flag"
 	"fmt"
 	_ "github.com/bmizerany/pq"
+	"github.com/gorilla/mux"
 	"github.com/paulsmith/gogeos/geos"
 	"image"
 	"image/png"
 	"log"
 	"math"
+	"net/http"
 	"os"
+	"strconv"
 )
 
 type Point struct {
@@ -21,6 +25,14 @@ type Point struct {
 
 type Envelope struct {
 	Min, Max Point
+}
+
+func (e *Envelope) W() float64 {
+	return e.Max.X - e.Min.X
+}
+
+func (e *Envelope) H() float64 {
+	return e.Max.Y - e.Min.Y
 }
 
 type Config struct {
@@ -38,6 +50,7 @@ const (
 
 var (
 	Origin = Point{-20037508.34789244, 20037508.34789244}
+	port   = flag.Int("port", 7979, "Server Port")
 	DbConn *sql.DB
 )
 
@@ -63,22 +76,39 @@ func TileToBbox(xc, yc, zoom int) (bbox Envelope) {
 	return
 }
 
-func GetTileFeatures(bbox Envelope) (wkb []byte) {
+func GetTileFeatures(bbox Envelope) (wkb [][]byte, err error) {
 	b := fmt.Sprintf("ST_MakeEnvelope(%f,%f,%f,%f, 3857)",
 		bbox.Min.X, bbox.Min.Y, bbox.Max.X, bbox.Max.Y)
 	tmpl := `SELECT ST_AsBinary(ST_Intersection(geom, %s)) 
             FROM routes where ST_Intersects(geom, %s);`
 	sql := fmt.Sprintf(tmpl, b, b)
-	fmt.Println(sql)
+	s, err := DbConn.Prepare(sql)
+	if err != nil {
+		return
+	}
+
+	rs, err := s.Query()
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+
+	var geom []byte
+	for rs.Next() {
+		err = rs.Scan(&geom)
+		if err != nil {
+			return
+		}
+		wkb = append(wkb, geom)
+	}
 	return
 }
 
 func GeoPToImgP(geoP geos.Coord, b Envelope) Point {
 	left := b.Min.X
 	top := b.Max.Y
-	x := (geoP.X - left) / w
-	y := (top - geoP.Y) / h
-
+	x := (geoP.X - left) / (b.W() / w)
+	y := (top - geoP.Y) / (b.H() / h)
 	return Point{x, y}
 }
 
@@ -103,7 +133,48 @@ func saveToPngFile(filePath string, m image.Image) {
 	fmt.Printf("Wrote %s OK.\n", filePath)
 }
 
+func RenderTile(res http.ResponseWriter, req *http.Request) {
+	vars := mux.Vars(req)
+	i := image.NewRGBA(image.Rect(0, 0, w, h))
+	gc := draw2d.NewGraphicContext(i)
+	gc.SetLineWidth(1)
+
+	x, _ := strconv.Atoi(vars["x"])
+	y, _ := strconv.Atoi(vars["y"])
+	z, _ := strconv.Atoi(vars["z"])
+	bbox := TileToBbox(x, y, z)
+
+	geoms, err := GetTileFeatures(bbox)
+	if err != nil {
+		fmt.Println(err)
+		http.Error(res, "Bad Tile", 500)
+		return
+	}
+
+	for _, wkb := range geoms {
+		geom, err := geos.FromWKB(wkb)
+		if err != nil {
+			fmt.Println(err)
+			http.Error(res, "Bad Tile", 500)
+		}
+
+		coords, _ := geom.Coords()
+		for i, c := range coords {
+			pt := GeoPToImgP(c, bbox)
+			if i == 0 {
+				gc.MoveTo(pt.X, pt.Y)
+			} else {
+				gc.LineTo(pt.X, pt.Y)
+			}
+		}
+		gc.Stroke()
+	}
+
+	saveToPngFile("TestPath.png", i)
+}
+
 func main() {
+	flag.Parse()
 
 	var conf Config
 	err := gcfg.ReadFileInto(&conf, "settings.conf")
@@ -111,33 +182,18 @@ func main() {
 		fmt.Println("Invalid setting.conf file", err)
 		return
 	}
-	DbConn = setupDb(conf.Database.User, conf.Database.Name)
 
+	DbConn = setupDb(conf.Database.User, conf.Database.Name)
 	defer DbConn.Close()
 
-	i := image.NewRGBA(image.Rect(0, 0, w, h))
-	gc := draw2d.NewGraphicContext(i)
-	gc.SetLineWidth(3)
-	b := Envelope{Point{2650000, 200000}, Point{2750000, 300000}}
-	//_ = GetTileFeatures(b)
-	poly, err := geos.FromWKT("LINESTRING (2691389 253794, 2699389 253994, 2709389 269994)")
-	if err != nil {
-		fmt.Println(err)
+	r := mux.NewRouter()
+	r.HandleFunc("/tile/{z:[0-9]+}/{x:[0-9]+}/{y:[0-9]+}/", RenderTile)
+	http.Handle("/", r)
+
+	p := strconv.Itoa(*port)
+	if err := http.ListenAndServe(":"+p, nil); err != nil {
+		fmt.Println("Failed to start server: %v", err)
+	} else {
+		fmt.Println("Serving on port: " + p)
 	}
-
-	coords, _ := poly.Coords()
-	for i, c := range coords {
-		pt := GeoPToImgP(c, b)
-		if i == 0 {
-			gc.MoveTo(pt.X, pt.Y)
-		} else {
-			gc.LineTo(pt.X, pt.Y)
-		}
-	}
-	gc.Stroke()
-
-	saveToPngFile("TestPath.png", i)
-
-	m := TileToBbox(76, 97, 8)
-	fmt.Printf("min: %f, max: %f", m.Min, m.Max)
 }

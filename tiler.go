@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"code.google.com/p/draw2d/draw2d"
 	"code.google.com/p/gcfg"
 	"database/sql"
@@ -15,7 +14,6 @@ import (
 	"log"
 	"math"
 	"net/http"
-	"os"
 	"strconv"
 )
 
@@ -69,8 +67,7 @@ func TileToBbox(xc, yc, zoom int) (bbox Envelope) {
 	y := float64(yc)
 	z := float64(zoom)
 	size := mapSize / math.Pow(2, z)
-	fmt.Println(x, y, z, size)
-	fmt.Println(x * size)
+
 	bbox.Min = Point{Origin.X + x*size, Origin.Y - (y+1)*size}
 	bbox.Max = Point{Origin.X + (x+1)*size, Origin.Y - y*size}
 	return
@@ -112,25 +109,13 @@ func GeoPToImgP(geoP geos.Coord, b Envelope) Point {
 	return Point{x, y}
 }
 
-func saveToPngFile(filePath string, m image.Image) {
-	f, err := os.Create(filePath)
+func writeImage(w http.ResponseWriter, i image.Image) {
+	w.Header().Set("Content-type", "image/png")
+	err := png.Encode(w, i)
 	if err != nil {
-		log.Println(err)
-		os.Exit(1)
+		fmt.Println(err)
+		http.Error(w, "Bad Image", 500)
 	}
-	defer f.Close()
-	b := bufio.NewWriter(f)
-	err = png.Encode(b, m)
-	if err != nil {
-		log.Println(err)
-		os.Exit(1)
-	}
-	err = b.Flush()
-	if err != nil {
-		log.Println(err)
-		os.Exit(1)
-	}
-	fmt.Printf("Wrote %s OK.\n", filePath)
 }
 
 func RenderTile(res http.ResponseWriter, req *http.Request) {
@@ -151,6 +136,7 @@ func RenderTile(res http.ResponseWriter, req *http.Request) {
 		return
 	}
 
+	fmt.Println("Tile features:", len(geoms))
 	for _, wkb := range geoms {
 		geom, err := geos.FromWKB(wkb)
 		if err != nil {
@@ -159,9 +145,9 @@ func RenderTile(res http.ResponseWriter, req *http.Request) {
 		}
 
 		coords, _ := geom.Coords()
-		for i, c := range coords {
+		for idx, c := range coords {
 			pt := GeoPToImgP(c, bbox)
-			if i == 0 {
+			if idx == 0 {
 				gc.MoveTo(pt.X, pt.Y)
 			} else {
 				gc.LineTo(pt.X, pt.Y)
@@ -170,7 +156,7 @@ func RenderTile(res http.ResponseWriter, req *http.Request) {
 		gc.Stroke()
 	}
 
-	saveToPngFile("TestPath.png", i)
+	writeImage(res, i)
 }
 
 func main() {

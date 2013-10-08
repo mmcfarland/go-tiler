@@ -14,6 +14,7 @@ import (
 	"log"
 	"math"
 	"net/http"
+	"runtime"
 	"strconv"
 )
 
@@ -73,12 +74,13 @@ func TileToBbox(xc, yc, zoom int) (bbox Envelope) {
 	return
 }
 
-func GetTileFeatures(bbox Envelope) (wkb [][]byte, err error) {
+func GetTileFeatures(table string, bbox Envelope) (wkb [][]byte, err error) {
+	// TODO: Clean table string
 	b := fmt.Sprintf("ST_MakeEnvelope(%f,%f,%f,%f, 3857)",
 		bbox.Min.X, bbox.Min.Y, bbox.Max.X, bbox.Max.Y)
 	tmpl := `SELECT ST_AsBinary(ST_Intersection(geom, %s)) 
-            FROM routes where ST_Intersects(geom, %s);`
-	sql := fmt.Sprintf(tmpl, b, b)
+            FROM %s where ST_Intersects(geom, %s);`
+	sql := fmt.Sprintf(tmpl, b, table, b)
 	s, err := DbConn.Prepare(sql)
 	if err != nil {
 		return
@@ -129,7 +131,7 @@ func RenderTile(res http.ResponseWriter, req *http.Request) {
 	z, _ := strconv.Atoi(vars["z"])
 	bbox := TileToBbox(x, y, z)
 
-	geoms, err := GetTileFeatures(bbox)
+	geoms, err := GetTileFeatures(vars["table"], bbox)
 	if err != nil {
 		fmt.Println(err)
 		http.Error(res, "Bad Tile", 500)
@@ -140,26 +142,52 @@ func RenderTile(res http.ResponseWriter, req *http.Request) {
 	for _, wkb := range geoms {
 		geom, err := geos.FromWKB(wkb)
 		if err != nil {
-			fmt.Println(err)
-			http.Error(res, "Bad Tile", 500)
+			handleError(err, res, "Bad Tile", 500)
+			return
+		}
+		t, err := geom.Type()
+		if err != nil {
+			handleError(err, res, "Couldn't parse geom", 500)
+			return
 		}
 
-		coords, _ := geom.Coords()
-		for idx, c := range coords {
-			pt := GeoPToImgP(c, bbox)
-			if idx == 0 {
-				gc.MoveTo(pt.X, pt.Y)
-			} else {
-				gc.LineTo(pt.X, pt.Y)
-			}
+		switch t {
+		case geos.LINESTRING, geos.MULTILINESTRING:
+			renderLine(gc, geom, bbox)
+		case geos.POLYGON, geos.MULTIPOLYGON:
+			renderPolygon(gc, geom)
+		default:
+			handleError(nil, res, fmt.Sprintf("Unkown Geom Type: %s", t), 500)
 		}
-		gc.Stroke()
 	}
 
 	writeImage(res, i)
 }
 
+func renderPolygon(gc *draw2d.ImageGraphicContext, geom *geos.Geometry) {
+
+}
+
+func renderLine(gc *draw2d.ImageGraphicContext, geom *geos.Geometry, bbox Envelope) {
+	coords, _ := geom.Coords()
+	for idx, c := range coords {
+		pt := GeoPToImgP(c, bbox)
+		if idx == 0 {
+			gc.MoveTo(pt.X, pt.Y)
+		} else {
+			gc.LineTo(pt.X, pt.Y)
+		}
+	}
+	gc.Stroke()
+}
+
+func handleError(err error, w http.ResponseWriter, desc string, code int) {
+	fmt.Println(err)
+	http.Error(w, "Bad geom type", 500)
+}
+
 func main() {
+	runtime.GOMAXPROCS(runtime.NumCPU())
 	flag.Parse()
 
 	var conf Config
@@ -173,7 +201,7 @@ func main() {
 	defer DbConn.Close()
 
 	r := mux.NewRouter()
-	r.HandleFunc("/tile/{z:[0-9]+}/{x:[0-9]+}/{y:[0-9]+}/", RenderTile)
+	r.HandleFunc("/tile/{table}/{z:[0-9]+}/{x:[0-9]+}/{y:[0-9]+}/", RenderTile)
 	http.Handle("/", r)
 
 	p := strconv.Itoa(*port)

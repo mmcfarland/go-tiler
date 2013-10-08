@@ -1,0 +1,25 @@
+
+        <link rel="stylesheet" href="http://cdn.leafletjs.com/leaflet-0.6.4/leaflet.css" />
+        <script src="http://cdn.leafletjs.com/leaflet-0.6.4/leaflet.js"></script>
+    </head>
+
+<body>
+    <div id="map" style="width:100%;height:100%"></div>
+
+    <script type="text/javascript">
+        map = new L.Map('map');
+
+        // create the tile layer with correct attribution
+        var gray ='//{s}.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}/',
+            base = new L.TileLayer(gray, {subdomains: ['server', 'services'], attribution: "esri"});       
+
+        var url ='http://localhost:7979/tile/{z}/{x}/{y}/',
+            tyler = new L.TileLayer(url);
+
+        map.setView(new L.LatLng(39.95, -75,15),11);
+        map.addLayer(base).addLayer(tyler);
+    </script>
+
+</body>
+
+</html>

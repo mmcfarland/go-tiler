@@ -81,6 +81,7 @@ func GetTileFeatures(table string, bbox Envelope) (wkb [][]byte, err error) {
 	tmpl := `SELECT ST_AsBinary(ST_Intersection(geom, %s)) 
             FROM %s where ST_Intersects(geom, %s);`
 	sql := fmt.Sprintf(tmpl, b, table, b)
+	fmt.Println(sql)
 	s, err := DbConn.Prepare(sql)
 	if err != nil {
 		return
@@ -155,7 +156,7 @@ func RenderTile(res http.ResponseWriter, req *http.Request) {
 		case geos.LINESTRING, geos.MULTILINESTRING:
 			renderLine(gc, geom, bbox)
 		case geos.POLYGON, geos.MULTIPOLYGON:
-			renderPolygon(gc, geom)
+			renderPolygon(gc, geom, bbox)
 		default:
 			handleError(nil, res, fmt.Sprintf("Unkown Geom Type: %s", t), 500)
 		}
@@ -164,8 +165,15 @@ func RenderTile(res http.ResponseWriter, req *http.Request) {
 	writeImage(res, i)
 }
 
-func renderPolygon(gc *draw2d.ImageGraphicContext, geom *geos.Geometry) {
-
+func renderPolygon(gc *draw2d.ImageGraphicContext, geom *geos.Geometry, bbox Envelope) {
+	// Does not handle holes
+	shell, err := geom.Shell()
+	fmt.Println(shell)
+	if err != nil {
+		renderLine(gc, geom, bbox)
+		return
+	}
+	renderLine(gc, shell, bbox)
 }
 
 func renderLine(gc *draw2d.ImageGraphicContext, geom *geos.Geometry, bbox Envelope) {

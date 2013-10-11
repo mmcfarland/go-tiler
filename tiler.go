@@ -10,6 +10,7 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/paulsmith/gogeos/geos"
 	"image"
+	"image/color"
 	"image/png"
 	"log"
 	"math"
@@ -34,11 +35,17 @@ func (e *Envelope) H() float64 {
 	return e.Max.Y - e.Min.Y
 }
 
+type LayerConfig struct {
+	StrokeWidth int
+	StrokeColor []string
+}
+
 type Config struct {
 	Database struct {
 		Name string
 		User string
 	}
+	Layer map[string]*LayerConfig
 }
 
 const (
@@ -51,6 +58,7 @@ var (
 	Origin = Point{-20037508.34789244, 20037508.34789244}
 	port   = flag.Int("port", 7979, "Server Port")
 	DbConn *sql.DB
+	Conf   Config
 )
 
 func setupDb(dbName, user string) (db *sql.DB) {
@@ -75,13 +83,18 @@ func TileToBbox(xc, yc, zoom int) (bbox Envelope) {
 }
 
 func GetTileFeatures(table string, bbox Envelope) (wkb [][]byte, err error) {
+	// To reduce edge effects, buffer the geographic bounding box by the
+	// amount of the largest (transformed) pixel stroke width for rendering, then
+	// clip the resulting image back to the desired size
+	buf := (bbox.W() / w) * 10.0
+
 	// TODO: Clean table string
-	b := fmt.Sprintf("ST_MakeEnvelope(%f,%f,%f,%f, 3857)",
-		bbox.Min.X, bbox.Min.Y, bbox.Max.X, bbox.Max.Y)
+	b := fmt.Sprintf("ST_Buffer(ST_MakeEnvelope(%f,%f,%f,%f, 3857), %f)",
+		bbox.Min.X, bbox.Min.Y, bbox.Max.X, bbox.Max.Y, buf)
+
 	tmpl := `SELECT ST_AsBinary(ST_Intersection(geom, %s)) 
             FROM %s where ST_Intersects(geom, %s);`
 	sql := fmt.Sprintf(tmpl, b, table, b)
-	fmt.Println(sql)
 	s, err := DbConn.Prepare(sql)
 	if err != nil {
 		return
@@ -125,7 +138,6 @@ func RenderTile(res http.ResponseWriter, req *http.Request) {
 	vars := mux.Vars(req)
 	i := image.NewRGBA(image.Rect(0, 0, w, h))
 	gc := draw2d.NewGraphicContext(i)
-	gc.SetLineWidth(1)
 
 	x, _ := strconv.Atoi(vars["x"])
 	y, _ := strconv.Atoi(vars["y"])
@@ -138,6 +150,9 @@ func RenderTile(res http.ResponseWriter, req *http.Request) {
 		http.Error(res, "Bad Tile", 500)
 		return
 	}
+
+	gc.SetLineWidth(2)
+	gc.SetStrokeColor(color.NRGBA{100, 155, 255, 0xFF})
 
 	fmt.Println("Tile features:", len(geoms))
 	for _, wkb := range geoms {
@@ -166,9 +181,8 @@ func RenderTile(res http.ResponseWriter, req *http.Request) {
 }
 
 func renderPolygon(gc *draw2d.ImageGraphicContext, geom *geos.Geometry, bbox Envelope) {
-	// Does not handle holes
+	// TODO: Does not handle holes
 	shell, err := geom.Shell()
-	fmt.Println(shell)
 	if err != nil {
 		renderLine(gc, geom, bbox)
 		return
@@ -191,21 +205,21 @@ func renderLine(gc *draw2d.ImageGraphicContext, geom *geos.Geometry, bbox Envelo
 
 func handleError(err error, w http.ResponseWriter, desc string, code int) {
 	fmt.Println(err)
-	http.Error(w, "Bad geom type", 500)
+	http.Error(w, desc, 500)
 }
 
 func main() {
 	runtime.GOMAXPROCS(runtime.NumCPU())
 	flag.Parse()
 
-	var conf Config
-	err := gcfg.ReadFileInto(&conf, "settings.conf")
+	err := gcfg.ReadFileInto(&Conf, "settings.conf")
 	if err != nil {
 		fmt.Println("Invalid setting.conf file", err)
 		return
 	}
 
-	DbConn = setupDb(conf.Database.User, conf.Database.Name)
+	fmt.Println(Conf.Layer["routes"])
+	DbConn = setupDb(Conf.Database.User, Conf.Database.Name)
 	defer DbConn.Close()
 
 	r := mux.NewRouter()

@@ -2,18 +2,20 @@ package main
 
 import (
 	"code.google.com/p/draw2d/draw2d"
-	"code.google.com/p/gcfg"
 	"database/sql"
+	"errors"
 	"flag"
 	"fmt"
 	_ "github.com/bmizerany/pq"
 	"github.com/gorilla/mux"
 	"github.com/paulsmith/gogeos/geos"
 	"image"
+	"image/color"
 	"image/png"
 	"log"
 	"math"
 	"net/http"
+	"runtime"
 	"strconv"
 )
 
@@ -31,13 +33,6 @@ func (e *Envelope) W() float64 {
 
 func (e *Envelope) H() float64 {
 	return e.Max.Y - e.Min.Y
-}
-
-type Config struct {
-	Database struct {
-		Name string
-		User string
-	}
 }
 
 const (
@@ -73,12 +68,19 @@ func TileToBbox(xc, yc, zoom int) (bbox Envelope) {
 	return
 }
 
-func GetTileFeatures(bbox Envelope) (wkb [][]byte, err error) {
-	b := fmt.Sprintf("ST_MakeEnvelope(%f,%f,%f,%f, 3857)",
-		bbox.Min.X, bbox.Min.Y, bbox.Max.X, bbox.Max.Y)
+func GetTileFeatures(table string, bbox Envelope) (wkb [][]byte, err error) {
+	// To reduce edge effects, buffer the geographic bounding box by the
+	// amount of the largest (transformed) pixel stroke width for rendering, then
+	// clip the resulting image back to the desired size
+	buf := (bbox.W() / w) * 10.0
+
+	// TODO: Clean table string
+	b := fmt.Sprintf("ST_Buffer(ST_MakeEnvelope(%f,%f,%f,%f, 3857), %f)",
+		bbox.Min.X, bbox.Min.Y, bbox.Max.X, bbox.Max.Y, buf)
+
 	tmpl := `SELECT ST_AsBinary(ST_Intersection(geom, %s)) 
-            FROM routes where ST_Intersects(geom, %s);`
-	sql := fmt.Sprintf(tmpl, b, b)
+            FROM %s where ST_Intersects(geom, %s);`
+	sql := fmt.Sprintf(tmpl, b, table, b)
 	s, err := DbConn.Prepare(sql)
 	if err != nil {
 		return
@@ -118,54 +120,98 @@ func writeImage(w http.ResponseWriter, i image.Image) {
 	}
 }
 
-func RenderTile(res http.ResponseWriter, req *http.Request) {
-	vars := mux.Vars(req)
+func TileRequestHandler(c *Config) func(http.ResponseWriter, *http.Request) {
+	return func(rw http.ResponseWriter, rq *http.Request) {
+
+		vars := mux.Vars(rq)
+
+		x, _ := strconv.Atoi(vars["x"])
+		y, _ := strconv.Atoi(vars["y"])
+		z, _ := strconv.Atoi(vars["z"])
+		bbox := TileToBbox(x, y, z)
+		table := vars["table"]
+		img, err := RenderTile(bbox, table, c.Layer[table])
+
+		if err != nil {
+			handleError(err, rw, "Bad request", 500)
+		}
+		writeImage(rw, img)
+	}
+}
+
+func RenderTile(bbox Envelope, table string, config *LayerConfig) (*image.RGBA, error) {
 	i := image.NewRGBA(image.Rect(0, 0, w, h))
 	gc := draw2d.NewGraphicContext(i)
-	gc.SetLineWidth(1)
 
-	x, _ := strconv.Atoi(vars["x"])
-	y, _ := strconv.Atoi(vars["y"])
-	z, _ := strconv.Atoi(vars["z"])
-	bbox := TileToBbox(x, y, z)
-
-	geoms, err := GetTileFeatures(bbox)
+	geoms, err := GetTileFeatures(table, bbox)
 	if err != nil {
 		fmt.Println(err)
-		http.Error(res, "Bad Tile", 500)
-		return
+		return i, err
 	}
 
-	fmt.Println("Tile features:", len(geoms))
+	gc.SetLineWidth(config.GetStrokeWidth())
+	gc.SetStrokeColor(color.NRGBA{100, 155, 255, 0xFF})
+
 	for _, wkb := range geoms {
 		geom, err := geos.FromWKB(wkb)
 		if err != nil {
 			fmt.Println(err)
-			http.Error(res, "Bad Tile", 500)
+			return i, err
+		}
+		t, err := geom.Type()
+		if err != nil {
+			fmt.Println(err)
+			return i, err
 		}
 
-		coords, _ := geom.Coords()
-		for idx, c := range coords {
-			pt := GeoPToImgP(c, bbox)
-			if idx == 0 {
-				gc.MoveTo(pt.X, pt.Y)
-			} else {
-				gc.LineTo(pt.X, pt.Y)
-			}
+		switch t {
+		case geos.LINESTRING, geos.MULTILINESTRING:
+			renderLine(gc, geom, bbox)
+		case geos.POLYGON, geos.MULTIPOLYGON:
+			renderPolygon(gc, geom, bbox)
+		default:
+			return nil, errors.New(fmt.Sprintf("Unkown Geom Type: %s", t))
 		}
-		gc.Stroke()
 	}
 
-	writeImage(res, i)
+	return i, nil
+}
+
+func renderPolygon(gc *draw2d.ImageGraphicContext, geom *geos.Geometry, bbox Envelope) {
+	// TODO: Does not handle holes
+	shell, err := geom.Shell()
+	if err != nil {
+		renderLine(gc, geom, bbox)
+		return
+	}
+	renderLine(gc, shell, bbox)
+}
+
+func renderLine(gc *draw2d.ImageGraphicContext, geom *geos.Geometry, bbox Envelope) {
+	coords, _ := geom.Coords()
+	for idx, c := range coords {
+		pt := GeoPToImgP(c, bbox)
+		if idx == 0 {
+			gc.MoveTo(pt.X, pt.Y)
+		} else {
+			gc.LineTo(pt.X, pt.Y)
+		}
+	}
+	gc.Stroke()
+}
+
+func handleError(err error, w http.ResponseWriter, desc string, code int) {
+	fmt.Println(err)
+	http.Error(w, desc, 500)
 }
 
 func main() {
+	runtime.GOMAXPROCS(runtime.NumCPU())
 	flag.Parse()
 
-	var conf Config
-	err := gcfg.ReadFileInto(&conf, "settings.conf")
+	conf, err := ParseConfig()
 	if err != nil {
-		fmt.Println("Invalid setting.conf file", err)
+		fmt.Println(err)
 		return
 	}
 
@@ -173,7 +219,8 @@ func main() {
 	defer DbConn.Close()
 
 	r := mux.NewRouter()
-	r.HandleFunc("/tile/{z:[0-9]+}/{x:[0-9]+}/{y:[0-9]+}/", RenderTile)
+	r.HandleFunc("/tile/{table}/{z:[0-9]+}/{x:[0-9]+}/{y:[0-9]+}/",
+		TileRequestHandler(conf))
 	http.Handle("/", r)
 
 	p := strconv.Itoa(*port)

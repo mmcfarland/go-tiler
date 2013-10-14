@@ -2,8 +2,8 @@ package main
 
 import (
 	"code.google.com/p/draw2d/draw2d"
-	"code.google.com/p/gcfg"
 	"database/sql"
+	"errors"
 	"flag"
 	"fmt"
 	_ "github.com/bmizerany/pq"
@@ -35,19 +35,6 @@ func (e *Envelope) H() float64 {
 	return e.Max.Y - e.Min.Y
 }
 
-type LayerConfig struct {
-	StrokeWidth int
-	StrokeColor []string
-}
-
-type Config struct {
-	Database struct {
-		Name string
-		User string
-	}
-	Layer map[string]*LayerConfig
-}
-
 const (
 	w       = 256.0
 	h       = 256.0
@@ -58,7 +45,6 @@ var (
 	Origin = Point{-20037508.34789244, 20037508.34789244}
 	port   = flag.Int("port", 7979, "Server Port")
 	DbConn *sql.DB
-	Conf   Config
 )
 
 func setupDb(dbName, user string) (db *sql.DB) {
@@ -134,37 +120,48 @@ func writeImage(w http.ResponseWriter, i image.Image) {
 	}
 }
 
-func RenderTile(res http.ResponseWriter, req *http.Request) {
-	vars := mux.Vars(req)
+func TileRequestHandler(c *Config) func(http.ResponseWriter, *http.Request) {
+	return func(rw http.ResponseWriter, rq *http.Request) {
+
+		vars := mux.Vars(rq)
+
+		x, _ := strconv.Atoi(vars["x"])
+		y, _ := strconv.Atoi(vars["y"])
+		z, _ := strconv.Atoi(vars["z"])
+		bbox := TileToBbox(x, y, z)
+		table := vars["table"]
+		img, err := RenderTile(bbox, table, c.Layer[table])
+
+		if err != nil {
+			handleError(err, rw, "Bad request", 500)
+		}
+		writeImage(rw, img)
+	}
+}
+
+func RenderTile(bbox Envelope, table string, config *LayerConfig) (*image.RGBA, error) {
 	i := image.NewRGBA(image.Rect(0, 0, w, h))
 	gc := draw2d.NewGraphicContext(i)
 
-	x, _ := strconv.Atoi(vars["x"])
-	y, _ := strconv.Atoi(vars["y"])
-	z, _ := strconv.Atoi(vars["z"])
-	bbox := TileToBbox(x, y, z)
-
-	geoms, err := GetTileFeatures(vars["table"], bbox)
+	geoms, err := GetTileFeatures(table, bbox)
 	if err != nil {
 		fmt.Println(err)
-		http.Error(res, "Bad Tile", 500)
-		return
+		return i, err
 	}
 
-	gc.SetLineWidth(2)
+	gc.SetLineWidth(config.GetStrokeWidth())
 	gc.SetStrokeColor(color.NRGBA{100, 155, 255, 0xFF})
 
-	fmt.Println("Tile features:", len(geoms))
 	for _, wkb := range geoms {
 		geom, err := geos.FromWKB(wkb)
 		if err != nil {
-			handleError(err, res, "Bad Tile", 500)
-			return
+			fmt.Println(err)
+			return i, err
 		}
 		t, err := geom.Type()
 		if err != nil {
-			handleError(err, res, "Couldn't parse geom", 500)
-			return
+			fmt.Println(err)
+			return i, err
 		}
 
 		switch t {
@@ -173,11 +170,11 @@ func RenderTile(res http.ResponseWriter, req *http.Request) {
 		case geos.POLYGON, geos.MULTIPOLYGON:
 			renderPolygon(gc, geom, bbox)
 		default:
-			handleError(nil, res, fmt.Sprintf("Unkown Geom Type: %s", t), 500)
+			return nil, errors.New(fmt.Sprintf("Unkown Geom Type: %s", t))
 		}
 	}
 
-	writeImage(res, i)
+	return i, nil
 }
 
 func renderPolygon(gc *draw2d.ImageGraphicContext, geom *geos.Geometry, bbox Envelope) {
@@ -212,18 +209,18 @@ func main() {
 	runtime.GOMAXPROCS(runtime.NumCPU())
 	flag.Parse()
 
-	err := gcfg.ReadFileInto(&Conf, "settings.conf")
+	conf, err := ParseConfig()
 	if err != nil {
-		fmt.Println("Invalid setting.conf file", err)
+		fmt.Println(err)
 		return
 	}
 
-	fmt.Println(Conf.Layer["routes"])
-	DbConn = setupDb(Conf.Database.User, Conf.Database.Name)
+	DbConn = setupDb(conf.Database.User, conf.Database.Name)
 	defer DbConn.Close()
 
 	r := mux.NewRouter()
-	r.HandleFunc("/tile/{table}/{z:[0-9]+}/{x:[0-9]+}/{y:[0-9]+}/", RenderTile)
+	r.HandleFunc("/tile/{table}/{z:[0-9]+}/{x:[0-9]+}/{y:[0-9]+}/",
+		TileRequestHandler(conf))
 	http.Handle("/", r)
 
 	p := strconv.Itoa(*port)

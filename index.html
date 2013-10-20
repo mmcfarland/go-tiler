@@ -16,7 +16,8 @@
 
         var rurl ='http://localhost:7979/tile/routes/{z}/{x}/{y}/',
             wurl ='http://localhost:7979/tile/wards/{z}/{x}/{y}/',
-            tyler = new L.TileLayer(wurl);
+            iurl ='http://localhost:7979/tile/inlets/{z}/{x}/{y}/',
+            tyler = new L.TileLayer(iurl);
 
         map.setView(new L.LatLng(39.95, -75,15),13);
         map.addLayer(base).addLayer(tyler);

@@ -13,17 +13,21 @@ type LayerConfig struct {
 	StrokeWidth float64
 	StrokeColor string
 	FillColor   []string
+	color       color.NRGBA
+	colorParsed bool
 }
 
 func (c *LayerConfig) GetStrokeColor() color.NRGBA {
-	rgba := parseColorString(c.StrokeColor)
-	fmt.Println(rgba)
-	return rgba
+	if c.colorParsed == false {
+		c.color = parseColorString(c.StrokeColor)
+		c.colorParsed = true
+	}
+	return c.color
 }
 
 func parseColorString(s string) color.NRGBA {
-	rgba := []uint8{0, 0, 0, 1}
-	for i, v := range strings.Split(s, "'") {
+	rgba := []uint8{0, 0, 0, 0}
+	for i, v := range strings.Split(s, ",") {
 		x, err := strconv.Atoi(v)
 		if err == nil && x < 256 {
 			rgba[i] = uint8(x)

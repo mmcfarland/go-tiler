@@ -10,7 +10,6 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/paulsmith/gogeos/geos"
 	"image"
-	"image/color"
 	"image/png"
 	"log"
 	"math"
@@ -150,7 +149,7 @@ func RenderTile(bbox Envelope, table string, config *LayerConfig) (*image.RGBA, 
 	}
 
 	gc.SetLineWidth(config.GetStrokeWidth())
-	gc.SetStrokeColor(color.NRGBA{100, 155, 255, 0xFF})
+	gc.SetStrokeColor(config.GetStrokeColor())
 
 	for _, wkb := range geoms {
 		geom, err := geos.FromWKB(wkb)
@@ -169,12 +168,28 @@ func RenderTile(bbox Envelope, table string, config *LayerConfig) (*image.RGBA, 
 			renderLine(gc, geom, bbox)
 		case geos.POLYGON, geos.MULTIPOLYGON:
 			renderPolygon(gc, geom, bbox)
+		case geos.POINT, geos.MULTIPOINT:
+			renderPoint(gc, geom, bbox)
 		default:
-			return nil, errors.New(fmt.Sprintf("Unkown Geom Type: %s", t))
+			return nil, errors.New(fmt.Sprintf("Unknown Geom Type: %s", t))
 		}
 	}
 
 	return i, nil
+}
+
+func renderPoint(gc *draw2d.ImageGraphicContext, geom *geos.Geometry, bbox Envelope) {
+	coords, err := geom.Coords()
+	if err != nil {
+		fmt.Println(err)
+	}
+
+	for _, c := range coords {
+		pt := GeoPToImgP(c, bbox)
+		draw2d.Circle(gc, pt.X, pt.Y, 5)
+	}
+
+	gc.Stroke()
 }
 
 func renderPolygon(gc *draw2d.ImageGraphicContext, geom *geos.Geometry, bbox Envelope) {

@@ -10,6 +10,7 @@ import (
 )
 
 type LayerConfig struct {
+	Table       string
 	StrokeWidth float64
 	StrokeColor string
 	FillColor   []string
@@ -50,6 +51,7 @@ type Config struct {
 	Database struct {
 		Name string
 		User string
+		Host string
 	}
 	Layer map[string]*LayerConfig
 }

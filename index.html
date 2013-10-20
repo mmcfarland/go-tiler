@@ -14,9 +14,9 @@
         var gray ='//{s}.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}/',
             base = new L.TileLayer(gray, {subdomains: ['server', 'services'], attribution: "esri"});       
 
-        var rurl ='http://localhost:7979/tile/routes/{z}/{x}/{y}/',
-            wurl ='http://localhost:7979/tile/wards/{z}/{x}/{y}/',
-            iurl ='http://localhost:7979/tile/inlets/{z}/{x}/{y}/';
+        var rurl ='http://localhost:7979/tile/line_test/{z}/{x}/{y}/',
+            wurl ='http://localhost:7979/tile/polygon_test/{z}/{x}/{y}/',
+            iurl ='http://localhost:7979/tile/point_test/{z}/{x}/{y}/';
 
         map.setView(new L.LatLng(39.95, -75,15),13);
         map.addLayer(base)

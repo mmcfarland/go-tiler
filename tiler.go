@@ -1,9 +1,7 @@
 package main
 
 import (
-	"code.google.com/p/draw2d/draw2d"
 	"database/sql"
-	"errors"
 	"flag"
 	"fmt"
 	_ "github.com/bmizerany/pq"
@@ -46,9 +44,8 @@ var (
 	DbConn *sql.DB
 )
 
-func setupDb(dbName, user string) (db *sql.DB) {
-	conn := fmt.Sprintf("user=%s dbname=%s", dbName, user)
-	fmt.Println(conn)
+func setupDb(dbName, user, host string) (db *sql.DB) {
+	conn := fmt.Sprintf("user=%s dbname=%s host=%s", dbName, user, host)
 	db, err := sql.Open("postgres", conn)
 	if err != nil {
 		log.Fatalf("Bad db conn: %v", err)
@@ -73,7 +70,6 @@ func GetTileFeatures(table string, bbox Envelope, pxbuf float64) (wkb [][]byte, 
 	// clip the resulting image back to the desired size
 	buf := (bbox.W() / w) * pxbuf
 
-	// TODO: Clean table string
 	b := fmt.Sprintf("ST_Buffer(ST_MakeEnvelope(%f,%f,%f,%f, 3857), %f)",
 		bbox.Min.X, bbox.Min.Y, bbox.Max.X, bbox.Max.Y, buf)
 
@@ -121,7 +117,6 @@ func writeImage(w http.ResponseWriter, i image.Image) {
 
 func TileRequestHandler(c *Config) func(http.ResponseWriter, *http.Request) {
 	return func(rw http.ResponseWriter, rq *http.Request) {
-
 		vars := mux.Vars(rq)
 
 		x, _ := strconv.Atoi(vars["x"])
@@ -129,7 +124,7 @@ func TileRequestHandler(c *Config) func(http.ResponseWriter, *http.Request) {
 		z, _ := strconv.Atoi(vars["z"])
 		bbox := TileToBbox(x, y, z)
 		table := vars["table"]
-		img, err := RenderTile(bbox, table, c.Layer[table])
+		img, err := RenderTile(bbox, c.Layer[table])
 
 		if err != nil {
 			handleError(err, rw, "Bad request", 500)
@@ -138,87 +133,9 @@ func TileRequestHandler(c *Config) func(http.ResponseWriter, *http.Request) {
 	}
 }
 
-func RenderTile(bbox Envelope, table string, config *LayerConfig) (*image.RGBA, error) {
-	i := image.NewRGBA(image.Rect(0, 0, w, h))
-	gc := draw2d.NewGraphicContext(i)
-
-	geoms, err := GetTileFeatures(table, bbox, config.GetStrokeWidth())
-	if err != nil {
-		fmt.Println(err)
-		return i, err
-	}
-
-	gc.SetLineWidth(config.GetStrokeWidth())
-	gc.SetStrokeColor(config.GetStrokeColor())
-
-	for _, wkb := range geoms {
-		geom, err := geos.FromWKB(wkb)
-		if err != nil {
-			fmt.Println(err)
-			return i, err
-		}
-		t, err := geom.Type()
-		if err != nil {
-			fmt.Println(err)
-			return i, err
-		}
-
-		switch t {
-		case geos.LINESTRING, geos.MULTILINESTRING:
-			renderLine(gc, geom, bbox)
-		case geos.POLYGON, geos.MULTIPOLYGON:
-			renderPolygon(gc, geom, bbox)
-		case geos.POINT, geos.MULTIPOINT:
-			renderPoint(gc, geom, bbox, config)
-		default:
-			return nil, errors.New(fmt.Sprintf("Unknown Geom Type: %s", t))
-		}
-	}
-
-	return i, nil
-}
-
-func renderPoint(gc *draw2d.ImageGraphicContext, geom *geos.Geometry, bbox Envelope,
-	config *LayerConfig) {
-	coords, err := geom.Coords()
-	if err != nil {
-		fmt.Println(err)
-	}
-
-	for _, c := range coords {
-		pt := GeoPToImgP(c, bbox)
-		draw2d.Circle(gc, pt.X, pt.Y, config.GetStrokeWidth())
-	}
-
-	gc.Stroke()
-}
-
-func renderPolygon(gc *draw2d.ImageGraphicContext, geom *geos.Geometry, bbox Envelope) {
-	// TODO: Does not handle holes
-	shell, err := geom.Shell()
-	if err != nil {
-		renderLine(gc, geom, bbox)
-		return
-	}
-	renderLine(gc, shell, bbox)
-}
-
-func renderLine(gc *draw2d.ImageGraphicContext, geom *geos.Geometry, bbox Envelope) {
-	coords, _ := geom.Coords()
-	for idx, c := range coords {
-		pt := GeoPToImgP(c, bbox)
-		if idx == 0 {
-			gc.MoveTo(pt.X, pt.Y)
-		} else {
-			gc.LineTo(pt.X, pt.Y)
-		}
-	}
-	gc.Stroke()
-}
-
 func handleError(err error, w http.ResponseWriter, desc string, code int) {
 	fmt.Println(err)
-	http.Error(w, desc, 500)
+	http.Error(w, desc, code)
 }
 
 func main() {
@@ -231,7 +148,7 @@ func main() {
 		return
 	}
 
-	DbConn = setupDb(conf.Database.User, conf.Database.Name)
+	DbConn = setupDb(conf.Database.User, conf.Database.Name, conf.Database.Host)
 	defer DbConn.Close()
 
 	r := mux.NewRouter()

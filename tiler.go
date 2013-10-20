@@ -67,11 +67,11 @@ func TileToBbox(xc, yc, zoom int) (bbox Envelope) {
 	return
 }
 
-func GetTileFeatures(table string, bbox Envelope) (wkb [][]byte, err error) {
+func GetTileFeatures(table string, bbox Envelope, pxbuf float64) (wkb [][]byte, err error) {
 	// To reduce edge effects, buffer the geographic bounding box by the
 	// amount of the largest (transformed) pixel stroke width for rendering, then
 	// clip the resulting image back to the desired size
-	buf := (bbox.W() / w) * 10.0
+	buf := (bbox.W() / w) * pxbuf
 
 	// TODO: Clean table string
 	b := fmt.Sprintf("ST_Buffer(ST_MakeEnvelope(%f,%f,%f,%f, 3857), %f)",
@@ -142,7 +142,7 @@ func RenderTile(bbox Envelope, table string, config *LayerConfig) (*image.RGBA, 
 	i := image.NewRGBA(image.Rect(0, 0, w, h))
 	gc := draw2d.NewGraphicContext(i)
 
-	geoms, err := GetTileFeatures(table, bbox)
+	geoms, err := GetTileFeatures(table, bbox, config.GetStrokeWidth())
 	if err != nil {
 		fmt.Println(err)
 		return i, err

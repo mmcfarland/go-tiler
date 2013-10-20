@@ -16,11 +16,13 @@
 
         var rurl ='http://localhost:7979/tile/routes/{z}/{x}/{y}/',
             wurl ='http://localhost:7979/tile/wards/{z}/{x}/{y}/',
-            iurl ='http://localhost:7979/tile/inlets/{z}/{x}/{y}/',
-            tyler = new L.TileLayer(iurl);
+            iurl ='http://localhost:7979/tile/inlets/{z}/{x}/{y}/';
 
         map.setView(new L.LatLng(39.95, -75,15),13);
-        map.addLayer(base).addLayer(tyler);
+        map.addLayer(base)
+            .addLayer(new L.TileLayer(wurl))
+            .addLayer(new L.TileLayer(rurl))
+            .addLayer(new L.TileLayer(iurl));
     </script>
 
 </body>

@@ -1,0 +1,13 @@
+# Basic settings for db connection and layer definition
+#[database]
+#name = yourdb_name
+#user = yourdb_user
+#host = localhost
+#
+#[layer "line_test"]
+## postgis table name
+#table=routes
+## line width in px
+#strokeWidth=2
+## define color as r,g,b,a uint8
+#strokeColor=0,100,80,200

@@ -169,7 +169,7 @@ func RenderTile(bbox Envelope, table string, config *LayerConfig) (*image.RGBA, 
 		case geos.POLYGON, geos.MULTIPOLYGON:
 			renderPolygon(gc, geom, bbox)
 		case geos.POINT, geos.MULTIPOINT:
-			renderPoint(gc, geom, bbox)
+			renderPoint(gc, geom, bbox, config)
 		default:
 			return nil, errors.New(fmt.Sprintf("Unknown Geom Type: %s", t))
 		}
@@ -178,7 +178,8 @@ func RenderTile(bbox Envelope, table string, config *LayerConfig) (*image.RGBA, 
 	return i, nil
 }
 
-func renderPoint(gc *draw2d.ImageGraphicContext, geom *geos.Geometry, bbox Envelope) {
+func renderPoint(gc *draw2d.ImageGraphicContext, geom *geos.Geometry, bbox Envelope,
+	config *LayerConfig) {
 	coords, err := geom.Coords()
 	if err != nil {
 		fmt.Println(err)
@@ -186,7 +187,7 @@ func renderPoint(gc *draw2d.ImageGraphicContext, geom *geos.Geometry, bbox Envel
 
 	for _, c := range coords {
 		pt := GeoPToImgP(c, bbox)
-		draw2d.Circle(gc, pt.X, pt.Y, 5)
+		draw2d.Circle(gc, pt.X, pt.Y, config.GetStrokeWidth())
 	}
 
 	gc.Stroke()

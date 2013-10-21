@@ -43,6 +43,13 @@ func RenderTile(bbox Envelope, config *LayerConfig) (*image.RGBA, error) {
 		default:
 			return nil, errors.New(fmt.Sprintf("Unknown Geom Type: %s", t))
 		}
+
+		if config.HasFillColor() {
+			gc.SetFillColor(config.GetFillColor())
+			gc.FillStroke()
+		} else {
+			gc.Stroke()
+		}
 	}
 
 	return i, nil
@@ -57,10 +64,8 @@ func renderPoint(gc *draw2d.ImageGraphicContext, geom *geos.Geometry, bbox Envel
 
 	for _, c := range coords {
 		pt := GeoPToImgP(c, bbox)
-		draw2d.Circle(gc, pt.X, pt.Y, config.GetStrokeWidth())
+		draw2d.Circle(gc, pt.X, pt.Y, config.GetRadius())
 	}
-
-	gc.Stroke()
 }
 
 func renderPolygon(gc *draw2d.ImageGraphicContext, geom *geos.Geometry, bbox Envelope) {
@@ -83,5 +88,4 @@ func renderLine(gc *draw2d.ImageGraphicContext, geom *geos.Geometry, bbox Envelo
 			gc.LineTo(pt.X, pt.Y)
 		}
 	}
-	gc.Stroke()
 }

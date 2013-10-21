@@ -13,17 +13,39 @@ type LayerConfig struct {
 	Table       string
 	StrokeWidth float64
 	StrokeColor string
-	FillColor   []string
-	color       color.NRGBA
-	colorParsed bool
+	FillColor   string
+	Radius      float64
+	fcol        color.NRGBA
+	fcolParsed  bool
+	scol        color.NRGBA
+	scolParsed  bool
 }
 
 func (c *LayerConfig) GetStrokeColor() color.NRGBA {
-	if c.colorParsed == false {
-		c.color = parseColorString(c.StrokeColor)
-		c.colorParsed = true
+	if c.scolParsed == false {
+		c.scol = parseColorString(c.StrokeColor)
+		c.scolParsed = true
 	}
-	return c.color
+	return c.scol
+}
+
+func (c *LayerConfig) GetFillColor() color.NRGBA {
+	if c.fcolParsed == false {
+		c.fcol = parseColorString(c.FillColor)
+		c.fcolParsed = true
+	}
+	return c.fcol
+}
+
+func (c *LayerConfig) HasFillColor() bool {
+	return c.FillColor != ""
+}
+
+func (c *LayerConfig) GetRadius() float64 {
+	if c.Radius == 0.0 {
+		return 1.0
+	}
+	return c.Radius
 }
 
 func parseColorString(s string) color.NRGBA {
